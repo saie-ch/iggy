@@ -100,24 +100,19 @@ impl IggyClient {
     ///
     /// Raises:
     ///     RuntimeError: If the address passed as a string is not a valid
-    ///         `host:port` pair, or if an `HttpConfig` client cannot be
-    ///         constructed. `api_url` is already validated when `HttpConfig` is
-    ///         built, so the latter does not currently fail; the exception is
-    ///         documented for interface consistency with the other transports.
+    ///         `host:port` pair, or if the client cannot be constructed.
     #[new]
     #[pyo3(signature = (conn=None))]
     fn new(
         #[gen_stub(override_type(type_repr = "TcpConfig | HttpConfig | builtins.str | None"))]
         conn: Option<PyClientConfig>,
     ) -> PyResult<Self> {
-        match conn {
+        let wrapper = match conn {
             Some(PyClientConfig::Tcp(config)) => {
                 let tcp_client = TcpClient::create(config.client_config()).map_err(|e| {
                     PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
                 })?;
-                Ok(Self {
-                    inner: Arc::new(RustIggyClient::new(ClientWrapper::Tcp(tcp_client))),
-                })
+                ClientWrapper::Tcp(tcp_client)
             }
             Some(PyClientConfig::ServerAddress(server_address)) => {
                 let config = Arc::new(
@@ -131,28 +126,25 @@ impl IggyClient {
                 let tcp_client = TcpClient::create(config).map_err(|e| {
                     PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
                 })?;
-                Ok(Self {
-                    inner: Arc::new(RustIggyClient::new(ClientWrapper::Tcp(tcp_client))),
-                })
+                ClientWrapper::Tcp(tcp_client)
             }
             Some(PyClientConfig::Http(config)) => {
                 let http_client = HttpClient::create(config.client_config()).map_err(|e| {
                     PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
                 })?;
-                Ok(Self {
-                    inner: Arc::new(RustIggyClient::new(ClientWrapper::Http(http_client))),
-                })
+                ClientWrapper::Http(http_client)
             }
             None => {
                 let tcp_client =
                     TcpClient::create(Arc::new(TcpClientConfig::default())).map_err(|e| {
                         PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
                     })?;
-                Ok(Self {
-                    inner: Arc::new(RustIggyClient::new(ClientWrapper::Tcp(tcp_client))),
-                })
+                ClientWrapper::Tcp(tcp_client)
             }
-        }
+        };
+        Ok(Self {
+            inner: Arc::new(RustIggyClient::new(wrapper)),
+        })
     }
 
     /// Constructs a new IggyClient from a connection string.
@@ -1121,6 +1113,12 @@ impl IggyClient {
     /// `poll_interval`, `polling_retry_interval`, `init_retry_interval` or an
     /// `AutoCommit` interval is negative, or if any of those except `poll_interval`
     /// is zero.
+    ///
+    /// Consumer groups are not available over HTTP: this call awaits the join
+    /// before returning, and HTTP answers it with `Feature is unavailable`.
+    /// Disabling `auto_join_consumer_group` only moves that failure to the
+    /// first poll, so it is not a way around this. Use `Consumer.Single(...)`
+    /// with `poll_messages(...)` instead.
     #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (
         name,
