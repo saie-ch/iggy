@@ -134,7 +134,7 @@ running prek / committing / pushing. This list is not exhaustive and other hook 
 
 ## Client Configuration
 
-`IggyClient` takes either a server address or a `TcpConfig`:
+`IggyClient` takes a server address, a `TcpConfig`, or a `QuicConfig`:
 
 ```python
 import asyncio

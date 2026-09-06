@@ -26,6 +26,7 @@ from apache_iggy import (
     Consumer,
     IggyClient,
     PollingStrategy,
+    QuicConfig,
     ReceiveMessage,
     TcpConfig,
     TcpReconnectionConfig,
@@ -101,8 +102,21 @@ def parse_args() -> ArgNamespace:
     return ArgNamespace(**vars(args))
 
 
-def build_config(args: ArgNamespace) -> TcpConfig:
+def build_config(args: ArgNamespace) -> TcpConfig | QuicConfig:
     """Build a TCP client configuration with auto-login and reconnection."""
+
+    # IggyClient(...) also accepts a QuicConfig for the QUIC transport. To use
+    # it, import QuicReconnectionConfig above and replace the return statement
+    # with:
+    #
+    # return QuicConfig(
+    #     server_address="127.0.0.1:8080",
+    #     server_name="localhost",
+    #     auto_login=AutoLogin.username_password(args.username, args.password),
+    #     reconnection=QuicReconnectionConfig(
+    #         enabled=True, interval=timedelta(seconds=1)
+    #     ),
+    # )
 
     return TcpConfig(
         server_address=args.tcp_server_address,
@@ -114,17 +128,6 @@ def build_config(args: ArgNamespace) -> TcpConfig:
         tls_enabled=args.tls,
         tls_ca_file=args.tls_ca_file or None,
     )
-    # IggyClient(...) also accepts a QuicConfig for the QUIC transport:
-    # from apache_iggy import QuicConfig, QuicReconnectionConfig
-    #
-    # return QuicConfig(
-    #     server_address="127.0.0.1:8080",
-    #     server_name="localhost",
-    #     auto_login=AutoLogin.username_password(args.username, args.password),
-    #     reconnection=QuicReconnectionConfig(
-    #         enabled=True, interval=timedelta(seconds=1)
-    #     ),
-    # )
 
 
 async def main():

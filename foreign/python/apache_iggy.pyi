@@ -1775,7 +1775,10 @@ class QuicConfig:
         Args:
             server_address: `host:port` of the Iggy server. Defaults to `127.0.0.1:8080`.
             client_address: `host:port` to bind the local UDP socket to. Defaults to
-                `127.0.0.1:0`, which binds to any available port.
+                `127.0.0.1:0`, which binds to any available port. Left at that
+                default, a `server_address` that resolves to IPv6 binds `[::1]:0`
+                instead, so the socket in use may not be the address read back
+                here; set it explicitly to pin the local address.
             server_name: Server name used for the QUIC/TLS handshake. Defaults to
                 `localhost`.
             auto_login: Credentials replayed on every connect. Defaults to `AutoLogin.disabled()`.
@@ -1799,11 +1802,12 @@ class QuicConfig:
                 to disabled, unlike the TCP and WebSocket transports.
 
         Raises:
-            ValueError: If `server_address` is not a valid `host:port` pair, if a
-                duration is negative, if `heartbeat_interval` is zero, if
-                `keep_alive_interval` or `max_idle_timeout` is non-zero but rounds
-                down to 0ms, if `initial_mtu` is below quinn's minimum of 1200, or if
-                a numeric field is outside the range of its underlying wire type.
+            ValueError: If `server_address` or `client_address` is not a valid
+                `host:port` pair, if a duration is negative, if
+                `heartbeat_interval` is zero, if `keep_alive_interval` or
+                `max_idle_timeout` is non-zero but rounds down to 0ms, if
+                `initial_mtu` is below quinn's minimum of 1200, or if a numeric
+                field is outside the range of its underlying wire type.
         """
     def __repr__(self) -> builtins.str: ...
 
@@ -1833,21 +1837,20 @@ class QuicReconnectionConfig:
 
         Args:
             enabled: Whether to reconnect at all. Defaults to enabled.
-            max_retries: Passes over the known endpoints after the first, or
-                `None` for unlimited; `0` still makes that first pass. One pass
-                tries the endpoint the client is on, the address it was
-                configured with, and every node the roster named, so this counts
-                passes rather than dials. Defaults
-                to unlimited, which means a call awaited while the server is
-                down never returns: `connect()`, `send_messages()` and
-                `poll_messages()` all wait inside the retry loop. Set a finite
+            max_retries: Redials of the configured server address after the first
+                attempt, or `None` for unlimited; `0` still makes that first
+                attempt. Unlike the TCP transport, QUIC redials the one address
+                it was configured with rather than walking a cluster roster, so
+                this counts dials. Defaults to unlimited, which means a call
+                awaited while the server is down never returns: `connect()`
+                waits inside the retry loop, as do `send_messages()` and
+                `poll_messages()` once auto-login is configured. Set a finite
                 number for request/reply style usage, so a call fails instead.
-            interval: Delay between passes. Defaults to 1 second. The first pass
-                runs at once when more than one endpoint is known.
-            reestablish_after: Cooldown before redialing the endpoint of the last
+            interval: Delay before each redial. Defaults to 1 second.
+            reestablish_after: Cooldown before redialing after a previously
                 successful connection, measured from when it was established, so
-                a session that outlived the interval is redialed at once. Owed to
-                that endpoint alone. Defaults to 5 seconds.
+                a session that outlived the interval is redialed at once.
+                Defaults to 5 seconds.
 
         Raises:
             ValueError: If a duration is negative, if `max_retries` is outside the

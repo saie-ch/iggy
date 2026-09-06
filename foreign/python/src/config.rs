@@ -28,6 +28,7 @@ use pyo3::types::PyDelta;
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 use pyo3_stub_gen::impl_stub_type;
 use secrecy::SecretString;
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 use crate::duration::{
@@ -426,21 +427,20 @@ impl QuicReconnectionConfig {
     ///
     /// Args:
     ///     enabled: Whether to reconnect at all. Defaults to enabled.
-    ///     max_retries: Passes over the known endpoints after the first, or
-    ///         `None` for unlimited; `0` still makes that first pass. One pass
-    ///         tries the endpoint the client is on, the address it was
-    ///         configured with, and every node the roster named, so this counts
-    ///         passes rather than dials. Defaults
-    ///         to unlimited, which means a call awaited while the server is
-    ///         down never returns: `connect()`, `send_messages()` and
-    ///         `poll_messages()` all wait inside the retry loop. Set a finite
+    ///     max_retries: Redials of the configured server address after the first
+    ///         attempt, or `None` for unlimited; `0` still makes that first
+    ///         attempt. Unlike the TCP transport, QUIC redials the one address
+    ///         it was configured with rather than walking a cluster roster, so
+    ///         this counts dials. Defaults to unlimited, which means a call
+    ///         awaited while the server is down never returns: `connect()`
+    ///         waits inside the retry loop, as do `send_messages()` and
+    ///         `poll_messages()` once auto-login is configured. Set a finite
     ///         number for request/reply style usage, so a call fails instead.
-    ///     interval: Delay between passes. Defaults to 1 second. The first pass
-    ///         runs at once when more than one endpoint is known.
-    ///     reestablish_after: Cooldown before redialing the endpoint of the last
+    ///     interval: Delay before each redial. Defaults to 1 second.
+    ///     reestablish_after: Cooldown before redialing after a previously
     ///         successful connection, measured from when it was established, so
-    ///         a session that outlived the interval is redialed at once. Owed to
-    ///         that endpoint alone. Defaults to 5 seconds.
+    ///         a session that outlived the interval is redialed at once.
+    ///         Defaults to 5 seconds.
     ///
     /// Raises:
     ///     ValueError: If a duration is negative, if `max_retries` is outside the
@@ -550,7 +550,10 @@ impl QuicConfig {
     /// Args:
     ///     server_address: `host:port` of the Iggy server. Defaults to `127.0.0.1:8080`.
     ///     client_address: `host:port` to bind the local UDP socket to. Defaults to
-    ///         `127.0.0.1:0`, which binds to any available port.
+    ///         `127.0.0.1:0`, which binds to any available port. Left at that
+    ///         default, a `server_address` that resolves to IPv6 binds `[::1]:0`
+    ///         instead, so the socket in use may not be the address read back
+    ///         here; set it explicitly to pin the local address.
     ///     server_name: Server name used for the QUIC/TLS handshake. Defaults to
     ///         `localhost`.
     ///     auto_login: Credentials replayed on every connect. Defaults to `AutoLogin.disabled()`.
@@ -574,11 +577,12 @@ impl QuicConfig {
     ///         to disabled, unlike the TCP and WebSocket transports.
     ///
     /// Raises:
-    ///     ValueError: If `server_address` is not a valid `host:port` pair, if a
-    ///         duration is negative, if `heartbeat_interval` is zero, if
-    ///         `keep_alive_interval` or `max_idle_timeout` is non-zero but rounds
-    ///         down to 0ms, if `initial_mtu` is below quinn's minimum of 1200, or if
-    ///         a numeric field is outside the range of its underlying wire type.
+    ///     ValueError: If `server_address` or `client_address` is not a valid
+    ///         `host:port` pair, if a duration is negative, if
+    ///         `heartbeat_interval` is zero, if `keep_alive_interval` or
+    ///         `max_idle_timeout` is non-zero but rounds down to 0ms, if
+    ///         `initial_mtu` is below quinn's minimum of 1200, or if a numeric
+    ///         field is outside the range of its underlying wire type.
     #[new]
     #[pyo3(signature = (
         *,
@@ -640,6 +644,12 @@ impl QuicConfig {
             .build()
             .map_err(|e| PyValueError::new_err(e.to_string()))?;
         if let Some(client_address) = client_address {
+            // Kept verbatim rather than normalized: `QuicClient::create` compares
+            // this against the literal default to decide whether to bind an IPv6
+            // socket for an IPv6 server, and a rewritten string would not match.
+            client_address.parse::<SocketAddr>().map_err(|e| {
+                PyValueError::new_err(format!("'client_address' is not a valid 'host:port': {e}"))
+            })?;
             inner.client_address = client_address;
         }
         if let Some(server_name) = server_name {
@@ -817,10 +827,14 @@ fn python_bool(value: bool) -> &'static str {
 
 /// Converts a Python int to the unsigned 64-bit integer a QUIC transport
 /// field expects, naming the parameter in the error so a caller can tell
-/// which argument was out of range.
+/// which argument was out of range. The bound in the message is `i64::MAX`
+/// rather than `u64::MAX` because pyo3 extracts the argument as an `i64`
+/// first: anything above that never reaches here, raising `OverflowError`
+/// on the way in. Every one of these fields is a buffer or window size, so
+/// the unreachable half of the range has no practical use.
 fn u64_param(value: i64, parameter: &str) -> PyResult<u64> {
     u64::try_from(value).map_err(|_| {
-        PyValueError::new_err(format!("'{parameter}' must be between 0 and {}", u64::MAX))
+        PyValueError::new_err(format!("'{parameter}' must be between 0 and {}", i64::MAX))
     })
 }
 

@@ -235,6 +235,22 @@ class TestQuicConfig:
         with pytest.raises(ValueError):
             QuicConfig(server_address=invalid_address)
 
+    @pytest.mark.parametrize(
+        "invalid_address",
+        ["", "127.0.0.1", "127.0.0.1:not-a-port", "127.0.0.1:70000", "localhost:0"],
+    )
+    def test_invalid_client_address_is_rejected(self, invalid_address: str):
+        """Test that a malformed bind address fails at construction.
+
+        `QuicClient::create` parses this as a `SocketAddr`, so a hostname is
+        rejected alongside the malformed forms: without the eager check the
+        failure would surface as a `RuntimeError` from `IggyClient(...)`
+        instead, which is not a `ValueError` and so escapes the handler a
+        caller wraps construction in.
+        """
+        with pytest.raises(ValueError, match="client_address"):
+            QuicConfig(client_address=invalid_address)
+
     def test_negative_heartbeat_interval_is_rejected(self):
         """Test that a negative heartbeat interval fails at construction."""
         with pytest.raises(ValueError, match="negative"):
